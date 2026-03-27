@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "start:bot": "npm run build && pm2 start ecosystem.config.js",
+    "stop:bot": "pm2 stop rental-assistant",
+    "restart:bot": "pm2 restart rental-assistant",
+    "logs": "pm2 logs rental-assistant",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "setup:telegram": "node scripts/setup-telegram.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
