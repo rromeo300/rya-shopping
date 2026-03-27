@@ -1,20 +1,24 @@
-// PM2 configuration - keeps the bot running 24/7
 module.exports = {
-  apps: [{
-    name: 'rental-assistant',
-    script: 'node_modules/.bin/next',
-    args: 'start',
-    cwd: __dirname,
-    instances: 1,
-    autorestart: true,
-    watch: false,
-    max_memory_restart: '500M',
-    env: {
-      NODE_ENV: 'production',
-      PORT: 3000,
+  apps: [
+    {
+      name: 'rental-web',
+      script: 'node_modules/.bin/next',
+      args: 'start',
+      cwd: __dirname,
+      env_file: '.env.local',
+      autorestart: true,
+      error_file: './logs/web-error.log',
+      out_file: './logs/web-out.log',
     },
-    error_file: './logs/error.log',
-    out_file: './logs/out.log',
-    log_date_format: 'YYYY-MM-DD HH:mm:ss',
-  }],
+    {
+      name: 'rental-telegram',
+      script: 'node_modules/.bin/tsx',
+      args: 'telegram-bot.ts',
+      cwd: __dirname,
+      env_file: '.env.local',
+      autorestart: true,
+      error_file: './logs/telegram-error.log',
+      out_file: './logs/telegram-out.log',
+    },
+  ],
 };
