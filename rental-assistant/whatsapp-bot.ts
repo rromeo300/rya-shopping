@@ -1,10 +1,9 @@
-// WhatsApp bot using Baileys (no Puppeteer needed — uses WhatsApp Web protocol)
-// First run: scan the QR code with your phone
-// After that: stays connected automatically
+// WhatsApp Bot — client-facing assistant
+// Responds to guest/tenant queries, handles check-in/check-out
+// Sends messages from its OWN number (not the owner's personal WA)
 import fs from 'fs';
 import path from 'path';
 
-// Load .env.local so PM2 restarts always find credentials
 (function loadEnv() {
   const envPath = path.join(process.cwd(), '.env.local');
   try {
@@ -31,10 +30,24 @@ import { Boom } from '@hapi/boom';
 import { getOrCreateConversation, addMessage } from './lib/db';
 import { chat } from './lib/assistant';
 
-const SESSION_DIR = path.join(process.cwd(), 'data', 'whatsapp-session');
+const SESSION_DIR = path.join(process.cwd(), 'data', 'whatsapp-bot-session');
 
-async function startWhatsApp() {
-  // Ensure session directory exists
+// Export sock so API routes can call sendMessage
+let activeSock: ReturnType<typeof makeWASocket> | null = null;
+export function getBotSock() { return activeSock; }
+
+// Send a message to any JID from the bot's number (used by web dashboard)
+export async function sendBotMessage(jid: string, text: string): Promise<boolean> {
+  if (!activeSock) return false;
+  try {
+    await activeSock.sendMessage(jid, { text });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function startBot() {
   fs.mkdirSync(SESSION_DIR, { recursive: true });
 
   const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
@@ -50,12 +63,10 @@ async function startWhatsApp() {
     printQRInTerminal: true,
     logger: {
       level: 'silent',
-      trace: () => {},
-      debug: () => {},
-      info: () => {},
-      warn: (msg: string) => console.warn('[WA]', msg),
-      error: (msg: string) => console.error('[WA]', msg),
-      fatal: (msg: string) => console.error('[WA FATAL]', msg),
+      trace: () => {}, debug: () => {}, info: () => {},
+      warn: (msg: string) => console.warn('[WA-BOT]', msg),
+      error: (msg: string) => console.error('[WA-BOT]', msg),
+      fatal: (msg: string) => console.error('[WA-BOT FATAL]', msg),
       child: () => ({
         level: 'silent',
         trace: () => {}, debug: () => {}, info: () => {},
@@ -64,73 +75,79 @@ async function startWhatsApp() {
     } as never,
   });
 
-  // Save credentials on update
+  activeSock = sock;
   sock.ev.on('creds.update', saveCreds);
 
-  // Handle connection updates
   sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
     if (qr) {
-      console.log('\n📱 ESCANEA ESTE CÓDIGO QR CON TU WHATSAPP:');
-      console.log('   WhatsApp → Dispositivos vinculados → Vincular dispositivo\n');
+      console.log('\n📱 ESCANEA EL QR CON EL NÚMERO DEL BOT (número dedicado):');
+      console.log('   Este es el número que responde a tus clientes\n');
     }
     if (connection === 'close') {
-      const shouldReconnect =
-        (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-      console.log('🔴 Conexión cerrada. Reconectando:', shouldReconnect);
-      if (shouldReconnect) startWhatsApp();
+      activeSock = null;
+      const code = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const reconnect = code !== DisconnectReason.loggedOut;
+      console.log(`🔴 Bot desconectado (${code}). Reconectando: ${reconnect}`);
+      if (reconnect) setTimeout(startBot, 5000);
     } else if (connection === 'open') {
-      console.log('✅ WhatsApp conectado y listo para recibir mensajes');
+      console.log('✅ WhatsApp Bot de clientes conectado y listo');
     }
   });
 
-  // Handle incoming messages
+  // ── Handle incoming messages ────────────────────────────────
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      // Skip messages from yourself or status updates
       if (msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') continue;
 
-      const text = msg.message?.conversation
-        || msg.message?.extendedTextMessage?.text
-        || '';
+      const text =
+        msg.message?.conversation ||
+        msg.message?.extendedTextMessage?.text || '';
 
       if (!text.trim()) continue;
 
       const jid = msg.key.remoteJid!;
-      const senderName = msg.pushName ?? 'Usuario';
+      const senderName = msg.pushName ?? 'Cliente';
 
-      console.log(`[${new Date().toLocaleTimeString()}] ${senderName}: ${text}`);
+      console.log(`[${new Date().toLocaleTimeString()}] ${senderName} (${jid}): ${text}`);
 
       try {
-        // Show typing indicator
         await sock.sendPresenceUpdate('composing', jid);
 
-        // Get or create conversation
         const conversation = getOrCreateConversation('whatsapp', jid);
-        addMessage(conversation.id, 'user', text);
+        addMessage(conversation.id, 'user', `[${senderName}]: ${text}`);
 
-        // Get AI response
-        const response = await chat(text, conversation.id);
+        const response = await chat(
+          `Mensaje de cliente ${senderName} (${jid}): ${text}`,
+          conversation.id
+        );
+
         addMessage(conversation.id, 'assistant', response);
+        console.log(`[${new Date().toLocaleTimeString()}] → ${response.substring(0, 80)}...`);
 
-        console.log(`[${new Date().toLocaleTimeString()}] Asistente: ${response.substring(0, 80)}...`);
-
-        // Stop typing and send response
         await sock.sendPresenceUpdate('paused', jid);
-        await sock.sendMessage(jid, { text: response });
 
+        // Split long messages
+        if (response.length <= 4096) {
+          await sock.sendMessage(jid, { text: response });
+        } else {
+          const chunks = response.match(/[\s\S]{1,4000}/g) ?? [response];
+          for (const chunk of chunks) {
+            await sock.sendMessage(jid, { text: chunk });
+          }
+        }
       } catch (error) {
-        console.error('Error procesando mensaje:', error);
+        console.error('Error:', error);
         await sock.sendMessage(jid, {
-          text: 'Lo siento, ocurrió un error. Intenta de nuevo.',
+          text: 'Lo siento, tuve un problema. Por favor intenta de nuevo en un momento.',
         });
       }
     }
   });
 
-  console.log('🚀 Bot de WhatsApp iniciado...');
+  console.log('🤖 WhatsApp Bot iniciando...');
   return sock;
 }
 
-startWhatsApp().catch(console.error);
+startBot().catch(console.error);

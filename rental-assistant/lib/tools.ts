@@ -29,6 +29,11 @@ import {
   getAllMemory,
   saveMemory,
   deleteMemory,
+  getCheckins,
+  createCheckin,
+  updateCheckin,
+  getTodayCheckins,
+  getTodayCheckouts,
 } from './db';
 
 export const propertyTools: Anthropic.Tool[] = [
@@ -624,6 +629,83 @@ export const propertyTools: Anthropic.Tool[] = [
     },
   },
 
+  // ── Check-in / Check-out ──────────────────────────────────
+  {
+    name: 'list_checkins',
+    description: 'Lista los check-ins. Puede filtrar por estatus: scheduled, checked_in, checked_out, cancelled. Sin filtro devuelve todos.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        status: { type: 'string', enum: ['scheduled','checked_in','checked_out','cancelled'], description: 'Filtrar por estatus' },
+        today: { type: 'boolean', description: 'Si true, devuelve solo check-ins de hoy' },
+        todayCheckouts: { type: 'boolean', description: 'Si true, devuelve check-outs programados para hoy' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'create_checkin',
+    description: 'Registra un nuevo check-in / reservación. Guarda la información del huésped, fechas, código de acceso, wifi, y notas especiales para enviarle vía WhatsApp.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        propertyId:           { type: 'string', description: 'ID de la propiedad' },
+        guestName:            { type: 'string', description: 'Nombre del huésped' },
+        guestPhone:           { type: 'string', description: 'Teléfono del huésped' },
+        guestWhatsapp:        { type: 'string', description: 'Número WhatsApp del huésped (con código de país, ej: 521234567890)' },
+        checkInDate:          { type: 'string', description: 'Fecha y hora de llegada (ISO 8601)' },
+        checkOutDate:         { type: 'string', description: 'Fecha y hora de salida (ISO 8601)' },
+        keyCode:              { type: 'string', description: 'Código de la cerradura o indicaciones para la llave' },
+        wifiName:             { type: 'string', description: 'Nombre de la red WiFi' },
+        wifiPassword:         { type: 'string', description: 'Contraseña del WiFi' },
+        parkingInfo:          { type: 'string', description: 'Información de estacionamiento' },
+        specialInstructions:  { type: 'string', description: 'Instrucciones especiales para el huésped' },
+        notes:                { type: 'string', description: 'Notas internas (no se envían al huésped)' },
+      },
+      required: ['propertyId', 'guestName', 'checkInDate'],
+    },
+  },
+  {
+    name: 'update_checkin',
+    description: 'Actualiza un check-in: cambia el estatus (checked_in, checked_out), agrega calificación, notas de la estadía.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        id:              { type: 'string', description: 'ID del check-in' },
+        status:          { type: 'string', enum: ['scheduled','checked_in','checked_out','cancelled'] },
+        keyCode:         { type: 'string' },
+        wifiPassword:    { type: 'string' },
+        checkOutDate:    { type: 'string', description: 'Fecha real de salida' },
+        rating:          { type: 'number', description: 'Calificación del huésped 1-5' },
+        reviewNotes:     { type: 'string', description: 'Notas de la estadía / reseña' },
+        notes:           { type: 'string' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'get_checkin_message',
+    description: 'Genera el mensaje de bienvenida / instrucciones de check-in para enviar al huésped por WhatsApp. Incluye código de acceso, wifi, instrucciones.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        checkinId: { type: 'string', description: 'ID del check-in' },
+      },
+      required: ['checkinId'],
+    },
+  },
+  {
+    name: 'get_checkout_message',
+    description: 'Genera el mensaje de check-out para enviar al huésped: hora de salida, instrucciones para dejar la propiedad, solicitud de reseña.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        checkinId: { type: 'string', description: 'ID del check-in' },
+      },
+      required: ['checkinId'],
+    },
+  },
+
   // ── Self-Learning Memory ───────────────────────────────────
   {
     name: 'save_memory',
@@ -881,6 +963,76 @@ export function executeToolCall(toolName: string, toolInput: Record<string, unkn
         const item = updateInventoryItem(id, data);
         if (!item) return JSON.stringify({ success: false, error: 'Artículo no encontrado' });
         return JSON.stringify({ success: true, item });
+      }
+
+      case 'list_checkins': {
+        const { status, today, todayCheckouts: todayOut } = toolInput as { status?: string; today?: boolean; todayCheckouts?: boolean };
+        if (today) return JSON.stringify({ checkins: getTodayCheckins() });
+        if (todayOut) return JSON.stringify({ checkouts: getTodayCheckouts() });
+        return JSON.stringify({ checkins: getCheckins(status), count: getCheckins(status).length });
+      }
+
+      case 'create_checkin': {
+        const data = toolInput as Parameters<typeof createCheckin>[0];
+        const checkin = createCheckin({ ...data, status: 'scheduled' });
+        return JSON.stringify({ success: true, checkin });
+      }
+
+      case 'update_checkin': {
+        const { id, ...data } = toolInput as { id: string; [key: string]: unknown };
+        const checkin = updateCheckin(id, data);
+        if (!checkin) return JSON.stringify({ success: false, error: 'Check-in no encontrado' });
+        return JSON.stringify({ success: true, checkin });
+      }
+
+      case 'get_checkin_message': {
+        const { checkinId } = toolInput as { checkinId: string };
+        const c = getCheckins().find(ch => ch.id === checkinId);
+        if (!c) return JSON.stringify({ error: 'Check-in no encontrado' });
+        const props = getProperties();
+        const prop = props.find(p => p.id === c.propertyId);
+        const checkinDate = new Date(c.checkInDate).toLocaleString('es-MX', { dateStyle: 'full', timeStyle: 'short' });
+        const checkoutDate = c.checkOutDate
+          ? new Date(c.checkOutDate).toLocaleString('es-MX', { dateStyle: 'full', timeStyle: 'short' })
+          : 'por confirmar';
+        const msg = [
+          `¡Hola ${c.guestName}! 👋 Bienvenido/a a ${prop?.name ?? 'la propiedad'}.`,
+          ``,
+          `📅 *Check-in:* ${checkinDate}`,
+          `📅 *Check-out:* ${checkoutDate}`,
+          c.keyCode     ? `🔑 *Acceso:* ${c.keyCode}` : '',
+          c.wifiName    ? `📶 *WiFi:* ${c.wifiName}` : '',
+          c.wifiPassword ? `🔒 *Contraseña WiFi:* ${c.wifiPassword}` : '',
+          c.parkingInfo  ? `🚗 *Estacionamiento:* ${c.parkingInfo}` : '',
+          c.specialInstructions ? `\n📋 *Instrucciones:*\n${c.specialInstructions}` : '',
+          ``,
+          `Cualquier duda estoy aquí para ayudarte. ¡Que disfrutes tu estadía! 🏠✨`,
+        ].filter(Boolean).join('\n');
+        return JSON.stringify({ message: msg, checkin: c });
+      }
+
+      case 'get_checkout_message': {
+        const { checkinId } = toolInput as { checkinId: string };
+        const c = getCheckins().find(ch => ch.id === checkinId);
+        if (!c) return JSON.stringify({ error: 'Check-in no encontrado' });
+        const checkoutDate = c.checkOutDate
+          ? new Date(c.checkOutDate).toLocaleString('es-MX', { dateStyle: 'long', timeStyle: 'short' })
+          : 'hoy';
+        const msg = [
+          `¡Hola ${c.guestName}! Esperamos que hayas disfrutado tu estadía 😊`,
+          ``,
+          `⏰ *Check-out:* ${checkoutDate}`,
+          ``,
+          `📋 *Al salir, por favor:*`,
+          `• Deja las llaves en el lugar indicado`,
+          `• Asegúrate de apagar luces y cerrar ventanas`,
+          `• Deja la basura en su lugar correspondiente`,
+          ``,
+          `⭐ Si te gustó tu estadía, nos ayudaría mucho que nos dejaras una reseña en Airbnb.`,
+          ``,
+          `¡Gracias y hasta pronto! 🙏`,
+        ].join('\n');
+        return JSON.stringify({ message: msg, checkin: c });
       }
 
       case 'save_memory': {

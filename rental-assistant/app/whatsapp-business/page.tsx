@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 interface Conversation {
   jid: string;
@@ -64,6 +64,9 @@ export default function WhatsAppBusinessPage() {
   const [newContact, setNewContact] = useState({ phone: '', name: '' });
   const [showAddLabel, setShowAddLabel] = useState(false);
   const [newLabel, setNewLabel] = useState({ name: '', color: 0 });
+  const [replyText, setReplyText] = useState('');
+  const [sending, setSending] = useState(false);
+  const replyRef = useRef<HTMLTextAreaElement>(null);
 
   const load = async () => {
     const [convRes, contactsRes, labelsRes, statsRes] = await Promise.all([
@@ -118,6 +121,30 @@ export default function WhatsAppBusinessPage() {
     setNewContact({ phone: '', name: '' });
     setShowAddContact(false);
     load();
+  };
+
+  const sendViaBot = async () => {
+    if (!selectedJid || !replyText.trim()) return;
+    setSending(true);
+    try {
+      const phone = selectedJid.replace('@s.whatsapp.net', '');
+      const res = await fetch('/api/whatsapp-business/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone, message: replyText }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setReplyText('');
+        // Refresh messages
+        const msgs = await fetch(`/api/whatsapp-business/messages?jid=${encodeURIComponent(selectedJid)}`);
+        setMessages(await msgs.json());
+      } else {
+        alert(`Error: ${data.error}`);
+      }
+    } finally {
+      setSending(false);
+    }
   };
 
   const addLabel = async () => {
@@ -293,9 +320,26 @@ export default function WhatsAppBusinessPage() {
                     ))}
                   </div>
 
-                  {/* No-send notice */}
-                  <div className="bg-yellow-50 border-t border-yellow-200 px-4 py-2 text-center text-xs text-yellow-700">
-                    🔒 Modo solo lectura — No se envían mensajes para proteger tu cuenta
+                  {/* Reply via Bot */}
+                  <div className="bg-white border-t px-4 py-3">
+                    <p className="text-xs text-gray-400 mb-2">📤 Responder desde el número del bot (no desde tu número personal)</p>
+                    <div className="flex gap-2">
+                      <textarea
+                        ref={replyRef}
+                        value={replyText}
+                        onChange={e => setReplyText(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendViaBot(); } }}
+                        placeholder="Escribe un mensaje... (Enter para enviar)"
+                        rows={2}
+                        className="flex-1 border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <button
+                        onClick={sendViaBot}
+                        disabled={sending || !replyText.trim()}
+                        className="bg-green-600 text-white px-4 rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-40">
+                        {sending ? '...' : 'Enviar'}
+                      </button>
+                    </div>
                   </div>
                 </>
               ) : (

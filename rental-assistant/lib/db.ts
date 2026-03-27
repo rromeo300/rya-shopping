@@ -166,6 +166,31 @@ db.exec(`
     updatedAt TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS checkins (
+    id TEXT PRIMARY KEY,
+    propertyId TEXT NOT NULL,
+    tenantId TEXT,
+    guestName TEXT NOT NULL,
+    guestPhone TEXT,
+    guestWhatsapp TEXT,
+    checkInDate TEXT NOT NULL,
+    checkOutDate TEXT,
+    status TEXT NOT NULL DEFAULT 'scheduled' CHECK(status IN ('scheduled','checked_in','checked_out','cancelled')),
+    keyCode TEXT,
+    wifiName TEXT,
+    wifiPassword TEXT,
+    parkingInfo TEXT,
+    specialInstructions TEXT,
+    notes TEXT,
+    instructionsSentAt TEXT,
+    checkoutSentAt TEXT,
+    rating INTEGER,
+    reviewNotes TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    FOREIGN KEY (propertyId) REFERENCES properties(id)
+  );
+
   CREATE TABLE IF NOT EXISTS wa_contacts (
     jid TEXT PRIMARY KEY,
     name TEXT,
@@ -834,6 +859,91 @@ export function getMemoryContext(): string {
 }
 
 export { db };
+
+// ============================================================
+// TypeScript Interface — Check-in / Check-out
+// ============================================================
+
+export interface Checkin {
+  id: string;
+  propertyId: string;
+  tenantId?: string;
+  guestName: string;
+  guestPhone?: string;
+  guestWhatsapp?: string;
+  checkInDate: string;
+  checkOutDate?: string;
+  status: 'scheduled' | 'checked_in' | 'checked_out' | 'cancelled';
+  keyCode?: string;
+  wifiName?: string;
+  wifiPassword?: string;
+  parkingInfo?: string;
+  specialInstructions?: string;
+  notes?: string;
+  instructionsSentAt?: string;
+  checkoutSentAt?: string;
+  rating?: number;
+  reviewNotes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getCheckins(status?: string): Checkin[] {
+  if (status) {
+    return db.prepare('SELECT * FROM checkins WHERE status = ? ORDER BY checkInDate ASC').all(status) as Checkin[];
+  }
+  return db.prepare('SELECT * FROM checkins ORDER BY checkInDate DESC').all() as Checkin[];
+}
+
+export function getCheckin(id: string): Checkin | undefined {
+  return db.prepare('SELECT * FROM checkins WHERE id = ?').get(id) as Checkin | undefined;
+}
+
+export function createCheckin(data: Omit<Checkin, 'id' | 'createdAt' | 'updatedAt'>): Checkin {
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const checkin: Checkin = { id, ...data, createdAt: now, updatedAt: now };
+  db.prepare(`
+    INSERT INTO checkins (id, propertyId, tenantId, guestName, guestPhone, guestWhatsapp,
+    checkInDate, checkOutDate, status, keyCode, wifiName, wifiPassword, parkingInfo,
+    specialInstructions, notes, instructionsSentAt, checkoutSentAt, rating, reviewNotes,
+    createdAt, updatedAt)
+    VALUES (@id, @propertyId, @tenantId, @guestName, @guestPhone, @guestWhatsapp,
+    @checkInDate, @checkOutDate, @status, @keyCode, @wifiName, @wifiPassword, @parkingInfo,
+    @specialInstructions, @notes, @instructionsSentAt, @checkoutSentAt, @rating, @reviewNotes,
+    @createdAt, @updatedAt)
+  `).run(checkin);
+  return checkin;
+}
+
+export function updateCheckin(id: string, data: Partial<Omit<Checkin, 'id' | 'createdAt'>>): Checkin | undefined {
+  const existing = getCheckin(id);
+  if (!existing) return undefined;
+  const updated = { ...existing, ...data, updatedAt: new Date().toISOString() };
+  db.prepare(`
+    UPDATE checkins SET propertyId=@propertyId, tenantId=@tenantId, guestName=@guestName,
+    guestPhone=@guestPhone, guestWhatsapp=@guestWhatsapp, checkInDate=@checkInDate,
+    checkOutDate=@checkOutDate, status=@status, keyCode=@keyCode, wifiName=@wifiName,
+    wifiPassword=@wifiPassword, parkingInfo=@parkingInfo, specialInstructions=@specialInstructions,
+    notes=@notes, instructionsSentAt=@instructionsSentAt, checkoutSentAt=@checkoutSentAt,
+    rating=@rating, reviewNotes=@reviewNotes, updatedAt=@updatedAt WHERE id=@id
+  `).run(updated);
+  return updated;
+}
+
+export function getTodayCheckins(): Checkin[] {
+  const today = new Date().toISOString().split('T')[0];
+  return db.prepare(
+    "SELECT * FROM checkins WHERE DATE(checkInDate) = ? AND status IN ('scheduled','checked_in')"
+  ).all(today) as Checkin[];
+}
+
+export function getTodayCheckouts(): Checkin[] {
+  const today = new Date().toISOString().split('T')[0];
+  return db.prepare(
+    "SELECT * FROM checkins WHERE DATE(checkOutDate) = ? AND status = 'checked_in'"
+  ).all(today) as Checkin[];
+}
 
 // ============================================================
 // TypeScript Interfaces — WhatsApp Business Observer
