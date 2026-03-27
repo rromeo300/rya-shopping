@@ -66,7 +66,10 @@ export default function WhatsAppBusinessPage() {
   const [newLabel, setNewLabel] = useState({ name: '', color: 0 });
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
+  const [connected, setConnected] = useState(false);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  const selectedJidRef = useRef(selectedJid);
+  selectedJidRef.current = selectedJid;
 
   const load = async () => {
     const [convRes, contactsRes, labelsRes, statsRes] = await Promise.all([
@@ -80,6 +83,56 @@ export default function WhatsAppBusinessPage() {
     setLabels(await labelsRes.json());
     setStats(await statsRes.json());
   };
+
+  // SSE — real-time updates from whatsapp-observer
+  useEffect(() => {
+    let es: EventSource;
+    let retryTimeout: ReturnType<typeof setTimeout>;
+
+    const connect = () => {
+      es = new EventSource('/api/whatsapp-business/events');
+
+      es.addEventListener('snapshot', (e) => {
+        const d = JSON.parse(e.data);
+        setConversations(d.conversations);
+        setStats(d.stats);
+        setLabels(d.labels);
+        setConnected(true);
+      });
+
+      es.addEventListener('new_message', (e) => {
+        const d = JSON.parse(e.data);
+        // Update stats badge
+        if (d.stats) setStats(d.stats);
+        // Update conversation list
+        setConversations(prev => {
+          const updated = prev.map(c =>
+            c.jid === d.jid
+              ? { ...c, lastMessage: d.content, lastMessageTime: d.timestamp }
+              : c
+          );
+          // Move updated convo to top
+          const idx = updated.findIndex(c => c.jid === d.jid);
+          if (idx > 0) { const [item] = updated.splice(idx, 1); updated.unshift(item); }
+          return updated;
+        });
+        // If this chat is open, refresh messages
+        if (selectedJidRef.current === d.jid) {
+          fetch(`/api/whatsapp-business/messages?jid=${encodeURIComponent(d.jid)}`)
+            .then(r => r.json()).then(setMessages);
+        }
+      });
+
+      es.onerror = () => {
+        setConnected(false);
+        es.close();
+        retryTimeout = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+    return () => { es?.close(); clearTimeout(retryTimeout); };
+  }, []);
 
   useEffect(() => { load(); }, [showArchived]);
 
@@ -174,7 +227,13 @@ export default function WhatsAppBusinessPage() {
           <span className="text-2xl">💼</span>
           <div>
             <h1 className="text-xl font-bold">WhatsApp Business Observer</h1>
+            <div className="flex items-center gap-2">
             <p className="text-green-200 text-sm">Solo lectura + organización · Sin envío de mensajes</p>
+            <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${connected ? 'bg-green-500 text-white' : 'bg-yellow-400 text-yellow-900'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-white animate-pulse' : 'bg-yellow-700'}`} />
+              {connected ? 'En vivo' : 'Conectando...'}
+            </span>
+          </div>
           </div>
         </div>
         {stats && (

@@ -5,6 +5,15 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Asistente de Propiedades',
   description: 'Gestión inteligente de propiedades en renta con IA',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'WA Business',
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 };
 
 export default function RootLayout({
@@ -14,6 +23,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" className="h-full antialiased">
+      <head>
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
+        <meta name="theme-color" content="#075E54" />
+      </head>
       <body className="h-full flex bg-gray-50 dark:bg-gray-950">
         {/* Sidebar */}
         <aside className="w-60 flex-shrink-0 bg-gray-900 dark:bg-gray-950 flex flex-col border-r border-gray-800">

@@ -38,7 +38,22 @@ import {
   updateWAConversationLabels,
   updateWAContactLabels,
   archiveWAConversation,
+  getWAConversations,
+  getWAStats,
+  getWALabels,
 } from './lib/db';
+
+// Push real-time update to all open browser tabs via SSE
+// We call the Next.js API endpoint via HTTP (observer runs in a separate process)
+async function pushUpdate(event: string, data: unknown) {
+  try {
+    await fetch('http://localhost:3000/api/whatsapp-business/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal': 'observer' },
+      body: JSON.stringify({ event, data }),
+    });
+  } catch { /* Next.js might not be running yet */ }
+}
 
 const SESSION_DIR = path.join(process.cwd(), 'data', 'whatsapp-business-session');
 
@@ -218,6 +233,16 @@ async function startObserver() {
         labels: '[]',
         archived: 0,
         pinned: 0,
+      });
+
+      // Push real-time update to open browser tabs
+      pushUpdate('new_message', {
+        jid,
+        content,
+        fromMe: msg.key.fromMe,
+        senderName: msg.pushName,
+        timestamp,
+        stats: getWAStats(),
       });
     }
   });
