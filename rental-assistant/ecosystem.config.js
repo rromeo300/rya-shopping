@@ -19,5 +19,14 @@ module.exports = {
       error_file: './logs/telegram-error.log',
       out_file: './logs/telegram-out.log',
     },
+    {
+      name: 'rental-whatsapp',
+      script: 'node_modules/.bin/tsx',
+      args: 'whatsapp-bot.ts',
+      cwd: __dirname,
+      autorestart: true,
+      error_file: './logs/whatsapp-error.log',
+      out_file: './logs/whatsapp-out.log',
+    },
   ],
 };

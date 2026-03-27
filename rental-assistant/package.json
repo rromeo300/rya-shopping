@@ -6,13 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-    "start:bot": "npm run build && pm2 start ecosystem.config.js",
-    "stop:bot": "pm2 stop rental-assistant",
-    "restart:bot": "pm2 restart rental-assistant",
-    "logs": "pm2 logs rental-assistant",
-    "tunnel": "cloudflared tunnel --url http://localhost:3000",
-    "setup:telegram": "node scripts/setup-telegram.js"
+    "lint": "eslint"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
@@ -20,6 +14,8 @@
     "@types/uuid": "^10.0.0",
     "better-sqlite3": "^12.8.0",
     "date-fns": "^4.1.0",
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.7.16",
     "grammy": "^1.41.1",
     "next": "16.2.1",
     "react": "19.2.4",
@@ -34,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
