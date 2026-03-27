@@ -28,5 +28,14 @@ module.exports = {
       error_file: './logs/whatsapp-error.log',
       out_file: './logs/whatsapp-out.log',
     },
+    {
+      name: 'rental-whatsapp-observer',
+      script: 'node_modules/.bin/tsx',
+      args: 'whatsapp-observer.ts',
+      cwd: __dirname,
+      autorestart: true,
+      error_file: './logs/whatsapp-observer-error.log',
+      out_file: './logs/whatsapp-observer-out.log',
+    },
   ],
 };

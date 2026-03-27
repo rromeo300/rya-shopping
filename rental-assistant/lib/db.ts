@@ -165,6 +165,48 @@ db.exec(`
     createdAt TEXT NOT NULL,
     updatedAt TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS wa_contacts (
+    jid TEXT PRIMARY KEY,
+    name TEXT,
+    phone TEXT,
+    pushName TEXT,
+    isBlocked INTEGER DEFAULT 0,
+    labels TEXT DEFAULT '[]',
+    lastSeen TEXT,
+    updatedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS wa_labels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color INTEGER DEFAULT 0,
+    predefinedId TEXT,
+    updatedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS wa_conversations (
+    jid TEXT PRIMARY KEY,
+    name TEXT,
+    unreadCount INTEGER DEFAULT 0,
+    lastMessage TEXT,
+    lastMessageTime TEXT,
+    labels TEXT DEFAULT '[]',
+    archived INTEGER DEFAULT 0,
+    pinned INTEGER DEFAULT 0,
+    updatedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS wa_messages (
+    id TEXT PRIMARY KEY,
+    jid TEXT NOT NULL,
+    content TEXT,
+    fromMe INTEGER DEFAULT 0,
+    senderName TEXT,
+    timestamp TEXT NOT NULL,
+    type TEXT DEFAULT 'text',
+    FOREIGN KEY (jid) REFERENCES wa_conversations(jid)
+  );
 `);
 
 // ============================================================
@@ -792,3 +834,136 @@ export function getMemoryContext(): string {
 }
 
 export { db };
+
+// ============================================================
+// TypeScript Interfaces — WhatsApp Business Observer
+// ============================================================
+
+export interface WAContact {
+  jid: string;
+  name?: string;
+  phone?: string;
+  pushName?: string;
+  isBlocked: number;
+  labels: string; // JSON array string
+  lastSeen?: string;
+  updatedAt: string;
+}
+
+export interface WALabel {
+  id: string;
+  name: string;
+  color: number;
+  predefinedId?: string;
+  updatedAt: string;
+}
+
+export interface WAConversation {
+  jid: string;
+  name?: string;
+  unreadCount: number;
+  lastMessage?: string;
+  lastMessageTime?: string;
+  labels: string; // JSON array string
+  archived: number;
+  pinned: number;
+  updatedAt: string;
+}
+
+export interface WAMessage {
+  id: string;
+  jid: string;
+  content?: string;
+  fromMe: number;
+  senderName?: string;
+  timestamp: string;
+  type: string;
+}
+
+// ============================================================
+// CRUD — WhatsApp Business Observer
+// ============================================================
+
+export function upsertWAContact(data: Omit<WAContact, 'updatedAt'>): void {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO wa_contacts (jid, name, phone, pushName, isBlocked, labels, lastSeen, updatedAt)
+    VALUES (@jid, @name, @phone, @pushName, @isBlocked, @labels, @lastSeen, @updatedAt)
+    ON CONFLICT(jid) DO UPDATE SET
+      name=COALESCE(@name, name), phone=COALESCE(@phone, phone),
+      pushName=COALESCE(@pushName, pushName), isBlocked=@isBlocked,
+      labels=@labels, lastSeen=COALESCE(@lastSeen, lastSeen), updatedAt=@updatedAt
+  `).run({ ...data, updatedAt: now });
+}
+
+export function getWAContacts(): WAContact[] {
+  return db.prepare('SELECT * FROM wa_contacts ORDER BY name ASC').all() as WAContact[];
+}
+
+export function updateWAContactLabels(jid: string, labels: string[]): void {
+  db.prepare('UPDATE wa_contacts SET labels=?, updatedAt=? WHERE jid=?')
+    .run(JSON.stringify(labels), new Date().toISOString(), jid);
+}
+
+export function upsertWALabel(data: Omit<WALabel, 'updatedAt'>): void {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO wa_labels (id, name, color, predefinedId, updatedAt)
+    VALUES (@id, @name, @color, @predefinedId, @updatedAt)
+    ON CONFLICT(id) DO UPDATE SET name=@name, color=@color, updatedAt=@updatedAt
+  `).run({ ...data, updatedAt: now });
+}
+
+export function getWALabels(): WALabel[] {
+  return db.prepare('SELECT * FROM wa_labels ORDER BY name ASC').all() as WALabel[];
+}
+
+export function upsertWAConversation(data: Omit<WAConversation, 'updatedAt'>): void {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO wa_conversations (jid, name, unreadCount, lastMessage, lastMessageTime, labels, archived, pinned, updatedAt)
+    VALUES (@jid, @name, @unreadCount, @lastMessage, @lastMessageTime, @labels, @archived, @pinned, @updatedAt)
+    ON CONFLICT(jid) DO UPDATE SET
+      name=COALESCE(@name, name), unreadCount=@unreadCount,
+      lastMessage=COALESCE(@lastMessage, lastMessage),
+      lastMessageTime=COALESCE(@lastMessageTime, lastMessageTime),
+      labels=@labels, archived=@archived, pinned=@pinned, updatedAt=@updatedAt
+  `).run({ ...data, updatedAt: now });
+}
+
+export function getWAConversations(archived = false): WAConversation[] {
+  return db.prepare(
+    'SELECT * FROM wa_conversations WHERE archived=? ORDER BY lastMessageTime DESC'
+  ).all(archived ? 1 : 0) as WAConversation[];
+}
+
+export function updateWAConversationLabels(jid: string, labels: string[]): void {
+  db.prepare('UPDATE wa_conversations SET labels=?, updatedAt=? WHERE jid=?')
+    .run(JSON.stringify(labels), new Date().toISOString(), jid);
+}
+
+export function archiveWAConversation(jid: string, archived: boolean): void {
+  db.prepare('UPDATE wa_conversations SET archived=?, updatedAt=? WHERE jid=?')
+    .run(archived ? 1 : 0, new Date().toISOString(), jid);
+}
+
+export function insertWAMessage(data: WAMessage): void {
+  db.prepare(`
+    INSERT OR IGNORE INTO wa_messages (id, jid, content, fromMe, senderName, timestamp, type)
+    VALUES (@id, @jid, @content, @fromMe, @senderName, @timestamp, @type)
+  `).run(data);
+}
+
+export function getWAMessages(jid: string, limit = 50): WAMessage[] {
+  return db.prepare(
+    'SELECT * FROM wa_messages WHERE jid=? ORDER BY timestamp DESC LIMIT ?'
+  ).all(jid, limit) as WAMessage[];
+}
+
+export function getWAStats(): { contacts: number; conversations: number; unread: number; labels: number } {
+  const contacts = (db.prepare('SELECT COUNT(*) as c FROM wa_contacts').get() as { c: number }).c;
+  const conversations = (db.prepare('SELECT COUNT(*) as c FROM wa_conversations WHERE archived=0').get() as { c: number }).c;
+  const unread = (db.prepare('SELECT COALESCE(SUM(unreadCount),0) as c FROM wa_conversations WHERE archived=0').get() as { c: number }).c;
+  const labels = (db.prepare('SELECT COUNT(*) as c FROM wa_labels').get() as { c: number }).c;
+  return { contacts, conversations, unread, labels };
+}
