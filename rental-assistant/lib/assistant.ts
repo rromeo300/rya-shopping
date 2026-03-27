@@ -1,12 +1,34 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { propertyTools, executeToolCall } from './tools';
-import { addMessage, getMessages } from './db';
+import { addMessage, getMessages, getMemoryContext } from './db';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const SYSTEM_PROMPT = `Eres un asistente inteligente para gestión de propiedades en renta. El negocio incluye propiedades en Airbnb y renta directa. Ayudas a gestionar inquilinos, mantenimiento, pagos, recordatorios y reportes financieros. Siempre respondes en español de manera profesional y concisa. Cuando el usuario te pida información, usa las herramientas disponibles para consultar la base de datos real. Puedes crear, actualizar y consultar propiedades, inquilinos, solicitudes de mantenimiento, pagos y recordatorios.`;
+const BASE_SYSTEM_PROMPT = `Eres un asistente inteligente para gestión de propiedades en renta. \
+El negocio incluye propiedades en Airbnb y renta directa. \
+Ayudas a gestionar inquilinos, mantenimiento, pagos, recordatorios, gastos, ingresos e inventarios. \
+Siempre respondes en español de manera profesional y concisa.
+
+CAPACIDADES:
+- Consultar, crear y actualizar propiedades, inquilinos, mantenimiento, pagos y recordatorios
+- Registrar y analizar gastos por propiedad y categoría
+- Registrar ingresos de Airbnb y renta directa, comparar fuentes
+- Gestionar inventario de artículos por propiedad
+- Aprender y recordar preferencias del usuario usando save_memory
+
+AUTO-MEJORA:
+Cuando el usuario mencione algo importante sobre su negocio, sus preferencias o datos clave \
+(ej: "siempre cobro el día 5", "mi plomero se llama Juan", "prefiero reportes en pesos"), \
+DEBES guardar esa información con la herramienta save_memory para recordarlo en futuras conversaciones.
+
+Hoy es ${new Date().toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`;
+
+function getSystemPrompt(): string {
+  const memoryContext = getMemoryContext();
+  return BASE_SYSTEM_PROMPT + memoryContext;
+}
 
 type MessageParam = Anthropic.MessageParam;
 
@@ -36,11 +58,8 @@ export function streamChat(
           const response = await anthropic.messages.create({
             model: 'claude-opus-4-6',
             max_tokens: 16000,
-            thinking: {
-              type: 'enabled',
-              budget_tokens: 10000,
-            },
-            system: SYSTEM_PROMPT,
+            thinking: { type: 'adaptive' },
+            system: getSystemPrompt(),
             tools: propertyTools,
             messages: anthropicMessages,
             stream: true,
@@ -184,7 +203,7 @@ export async function chat(message: string, conversationId: string): Promise<str
     const response = await anthropic.messages.create({
       model: 'claude-opus-4-6',
       max_tokens: 8096,
-      system: SYSTEM_PROMPT,
+      system: getSystemPrompt(),
       tools: propertyTools,
       messages: anthropicMessages,
     });

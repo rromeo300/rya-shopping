@@ -42,7 +42,7 @@ bot.on('message:text', async (ctx) => {
     if (response.length <= 4096) {
       await ctx.reply(response, { parse_mode: 'Markdown' });
     } else {
-      const chunks = response.match(/.{1,4000}/gs) || [response];
+      const chunks = response.match(/[\s\S]{1,4000}/g) || [response];
       for (const chunk of chunks) {
         await ctx.reply(chunk, { parse_mode: 'Markdown' });
       }

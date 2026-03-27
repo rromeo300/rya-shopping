@@ -106,6 +106,65 @@ db.exec(`
     createdAt TEXT NOT NULL,
     FOREIGN KEY (conversationId) REFERENCES conversations(id)
   );
+
+  CREATE TABLE IF NOT EXISTS expenses (
+    id TEXT PRIMARY KEY,
+    propertyId TEXT,
+    title TEXT NOT NULL,
+    amount REAL NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    vendor TEXT,
+    date TEXT NOT NULL,
+    paymentMethod TEXT DEFAULT 'efectivo',
+    receiptUrl TEXT,
+    notes TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    FOREIGN KEY (propertyId) REFERENCES properties(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS income_records (
+    id TEXT PRIMARY KEY,
+    propertyId TEXT,
+    title TEXT NOT NULL,
+    amount REAL NOT NULL,
+    source TEXT NOT NULL DEFAULT 'direct',
+    date TEXT NOT NULL,
+    tenantId TEXT,
+    notes TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    FOREIGN KEY (propertyId) REFERENCES properties(id),
+    FOREIGN KEY (tenantId) REFERENCES tenants(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS inventory_items (
+    id TEXT PRIMARY KEY,
+    propertyId TEXT NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'general',
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit TEXT DEFAULT 'pieza',
+    condition TEXT NOT NULL DEFAULT 'good',
+    purchaseValue REAL,
+    purchaseDate TEXT,
+    location TEXT,
+    notes TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    FOREIGN KEY (propertyId) REFERENCES properties(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS learned_memory (
+    id TEXT PRIMARY KEY,
+    key TEXT NOT NULL UNIQUE,
+    value TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'preference',
+    confidence REAL DEFAULT 1.0,
+    timesReinforced INTEGER DEFAULT 1,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
+  );
 `);
 
 // ============================================================
@@ -504,6 +563,232 @@ export function getDashboardStats(): DashboardStats {
     activeMaintenance: maintenanceRow.count,
     pendingReminders: remindersRow.count,
   };
+}
+
+// ============================================================
+// TypeScript Interfaces — New Modules
+// ============================================================
+
+export interface Expense {
+  id: string;
+  propertyId?: string;
+  title: string;
+  amount: number;
+  category: string;
+  vendor?: string;
+  date: string;
+  paymentMethod: string;
+  receiptUrl?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IncomeRecord {
+  id: string;
+  propertyId?: string;
+  title: string;
+  amount: number;
+  source: 'airbnb' | 'direct' | 'other';
+  date: string;
+  tenantId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryItem {
+  id: string;
+  propertyId: string;
+  name: string;
+  category: string;
+  quantity: number;
+  unit: string;
+  condition: 'new' | 'good' | 'fair' | 'poor' | 'damaged';
+  purchaseValue?: number;
+  purchaseDate?: string;
+  location?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LearnedMemory {
+  id: string;
+  key: string;
+  value: string;
+  category: 'preference' | 'business_rule' | 'pattern' | 'contact' | 'fact';
+  confidence: number;
+  timesReinforced: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================================
+// CRUD — Expenses
+// ============================================================
+
+export function getExpenses(propertyId?: string, category?: string): Expense[] {
+  let query = 'SELECT * FROM expenses WHERE 1=1';
+  const params: Record<string, string> = {};
+  if (propertyId) { query += ' AND propertyId = @propertyId'; params.propertyId = propertyId; }
+  if (category)   { query += ' AND category = @category'; params.category = category; }
+  query += ' ORDER BY date DESC';
+  return db.prepare(query).all(params) as Expense[];
+}
+
+export function createExpense(data: Omit<Expense, 'id' | 'createdAt' | 'updatedAt'>): Expense {
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const expense: Expense = { id, ...data, createdAt: now, updatedAt: now };
+  db.prepare(`
+    INSERT INTO expenses (id, propertyId, title, amount, category, vendor, date,
+    paymentMethod, receiptUrl, notes, createdAt, updatedAt)
+    VALUES (@id, @propertyId, @title, @amount, @category, @vendor, @date,
+    @paymentMethod, @receiptUrl, @notes, @createdAt, @updatedAt)
+  `).run(expense);
+  return expense;
+}
+
+export function updateExpense(id: string, data: Partial<Omit<Expense, 'id' | 'createdAt'>>): Expense | undefined {
+  const existing = db.prepare('SELECT * FROM expenses WHERE id = ?').get(id) as Expense | undefined;
+  if (!existing) return undefined;
+  const updated = { ...existing, ...data, updatedAt: new Date().toISOString() };
+  db.prepare(`
+    UPDATE expenses SET propertyId=@propertyId, title=@title, amount=@amount, category=@category,
+    vendor=@vendor, date=@date, paymentMethod=@paymentMethod, receiptUrl=@receiptUrl,
+    notes=@notes, updatedAt=@updatedAt WHERE id=@id
+  `).run(updated);
+  return updated;
+}
+
+export function getExpenseSummary(propertyId?: string): Record<string, number> {
+  let query = 'SELECT category, SUM(amount) as total FROM expenses WHERE 1=1';
+  const params: Record<string, string> = {};
+  if (propertyId) { query += ' AND propertyId = @propertyId'; params.propertyId = propertyId; }
+  query += ' GROUP BY category ORDER BY total DESC';
+  const rows = db.prepare(query).all(params) as { category: string; total: number }[];
+  return Object.fromEntries(rows.map(r => [r.category, r.total]));
+}
+
+// ============================================================
+// CRUD — Income Records
+// ============================================================
+
+export function getIncomeRecords(propertyId?: string, source?: string): IncomeRecord[] {
+  let query = 'SELECT * FROM income_records WHERE 1=1';
+  const params: Record<string, string> = {};
+  if (propertyId) { query += ' AND propertyId = @propertyId'; params.propertyId = propertyId; }
+  if (source)     { query += ' AND source = @source'; params.source = source; }
+  query += ' ORDER BY date DESC';
+  return db.prepare(query).all(params) as IncomeRecord[];
+}
+
+export function createIncomeRecord(data: Omit<IncomeRecord, 'id' | 'createdAt' | 'updatedAt'>): IncomeRecord {
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const record: IncomeRecord = { id, ...data, createdAt: now, updatedAt: now };
+  db.prepare(`
+    INSERT INTO income_records (id, propertyId, title, amount, source, date, tenantId, notes, createdAt, updatedAt)
+    VALUES (@id, @propertyId, @title, @amount, @source, @date, @tenantId, @notes, @createdAt, @updatedAt)
+  `).run(record);
+  return record;
+}
+
+export function getIncomeSummary(propertyId?: string): { total: number; bySource: Record<string, number> } {
+  let query = 'SELECT source, SUM(amount) as total FROM income_records WHERE 1=1';
+  const params: Record<string, string> = {};
+  if (propertyId) { query += ' AND propertyId = @propertyId'; params.propertyId = propertyId; }
+  query += ' GROUP BY source';
+  const rows = db.prepare(query).all(params) as { source: string; total: number }[];
+  const bySource = Object.fromEntries(rows.map(r => [r.source, r.total]));
+  const total = rows.reduce((sum, r) => sum + r.total, 0);
+  return { total, bySource };
+}
+
+// ============================================================
+// CRUD — Inventory
+// ============================================================
+
+export function getInventory(propertyId?: string, category?: string): InventoryItem[] {
+  let query = 'SELECT * FROM inventory_items WHERE 1=1';
+  const params: Record<string, string> = {};
+  if (propertyId) { query += ' AND propertyId = @propertyId'; params.propertyId = propertyId; }
+  if (category)   { query += ' AND category = @category'; params.category = category; }
+  query += ' ORDER BY category, name';
+  return db.prepare(query).all(params) as InventoryItem[];
+}
+
+export function createInventoryItem(data: Omit<InventoryItem, 'id' | 'createdAt' | 'updatedAt'>): InventoryItem {
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const item: InventoryItem = { id, ...data, createdAt: now, updatedAt: now };
+  db.prepare(`
+    INSERT INTO inventory_items (id, propertyId, name, category, quantity, unit, condition,
+    purchaseValue, purchaseDate, location, notes, createdAt, updatedAt)
+    VALUES (@id, @propertyId, @name, @category, @quantity, @unit, @condition,
+    @purchaseValue, @purchaseDate, @location, @notes, @createdAt, @updatedAt)
+  `).run(item);
+  return item;
+}
+
+export function updateInventoryItem(id: string, data: Partial<Omit<InventoryItem, 'id' | 'createdAt'>>): InventoryItem | undefined {
+  const existing = db.prepare('SELECT * FROM inventory_items WHERE id = ?').get(id) as InventoryItem | undefined;
+  if (!existing) return undefined;
+  const updated = { ...existing, ...data, updatedAt: new Date().toISOString() };
+  db.prepare(`
+    UPDATE inventory_items SET propertyId=@propertyId, name=@name, category=@category,
+    quantity=@quantity, unit=@unit, condition=@condition, purchaseValue=@purchaseValue,
+    purchaseDate=@purchaseDate, location=@location, notes=@notes, updatedAt=@updatedAt WHERE id=@id
+  `).run(updated);
+  return updated;
+}
+
+// ============================================================
+// Learned Memory — Self-Improvement
+// ============================================================
+
+export function getAllMemory(): LearnedMemory[] {
+  return db.prepare('SELECT * FROM learned_memory ORDER BY timesReinforced DESC').all() as LearnedMemory[];
+}
+
+export function getMemoryByCategory(category: string): LearnedMemory[] {
+  return db.prepare('SELECT * FROM learned_memory WHERE category = ? ORDER BY timesReinforced DESC').all(category) as LearnedMemory[];
+}
+
+export function saveMemory(key: string, value: string, category: LearnedMemory['category'] = 'preference'): LearnedMemory {
+  const now = new Date().toISOString();
+  const existing = db.prepare('SELECT * FROM learned_memory WHERE key = ?').get(key) as LearnedMemory | undefined;
+  if (existing) {
+    const updated = {
+      ...existing,
+      value,
+      timesReinforced: existing.timesReinforced + 1,
+      updatedAt: now,
+    };
+    db.prepare(`
+      UPDATE learned_memory SET value=@value, timesReinforced=@timesReinforced, updatedAt=@updatedAt WHERE key=@key
+    `).run(updated);
+    return updated;
+  }
+  const id = crypto.randomUUID();
+  const memory: LearnedMemory = { id, key, value, category, confidence: 1.0, timesReinforced: 1, createdAt: now, updatedAt: now };
+  db.prepare(`
+    INSERT INTO learned_memory (id, key, value, category, confidence, timesReinforced, createdAt, updatedAt)
+    VALUES (@id, @key, @value, @category, @confidence, @timesReinforced, @createdAt, @updatedAt)
+  `).run(memory);
+  return memory;
+}
+
+export function deleteMemory(key: string): boolean {
+  return db.prepare('DELETE FROM learned_memory WHERE key = ?').run(key).changes > 0;
+}
+
+export function getMemoryContext(): string {
+  const memories = getAllMemory();
+  if (memories.length === 0) return '';
+  const lines = memories.map(m => `- [${m.category}] ${m.key}: ${m.value}`);
+  return '\n\nCONOCIMIENTO APRENDIDO DEL USUARIO:\n' + lines.join('\n');
 }
 
 export { db };
