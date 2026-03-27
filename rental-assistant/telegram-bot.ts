@@ -1,8 +1,26 @@
 // Telegram bot in polling mode — no webhook or tunnel needed
 // Run with: npx ts-node telegram-bot.ts  OR  node telegram-bot.js (after build)
+import fs from 'fs';
+import path from 'path';
 import { Bot } from 'grammy';
 import { getOrCreateConversation, addMessage } from './lib/db';
 import { chat } from './lib/assistant';
+
+// Load .env.local so the bot works regardless of how PM2 launches it
+(function loadEnv() {
+  const envPath = path.join(process.cwd(), '.env.local');
+  try {
+    const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+    for (const line of lines) {
+      const match = line.trim().match(/^([^#=][^=]*)=(.+)$/);
+      if (match) {
+        const key = match[1].trim();
+        const val = match[2].trim().replace(/^["']|["']$/g, '');
+        if (!process.env[key]) process.env[key] = val;
+      }
+    }
+  } catch { /* .env.local not found, rely on system env */ }
+})();
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) {

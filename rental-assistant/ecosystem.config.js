@@ -15,7 +15,6 @@ module.exports = {
       script: 'node_modules/.bin/tsx',
       args: 'telegram-bot.ts',
       cwd: __dirname,
-      env_file: '.env.local',
       autorestart: true,
       error_file: './logs/telegram-error.log',
       out_file: './logs/telegram-out.log',
