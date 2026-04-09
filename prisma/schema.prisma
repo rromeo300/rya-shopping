@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Property {
+  id          String   @id @default(cuid())
+  name        String
+  address     String
+  type        String
+  units       Int      @default(1)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenants             Tenant[]
+  maintenanceRequests MaintenanceRequest[]
+  payments            Payment[]
+}
+
+model Tenant {
+  id           String    @id @default(cuid())
+  name         String
+  email        String?
+  phone        String?
+  propertyId   String
+  unit         String?
+  rentAmount   Float
+  leaseStart   DateTime
+  leaseEnd     DateTime?
+  status       String    @default("active")
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  property Property  @relation(fields: [propertyId], references: [id])
+  payments Payment[]
+}
+
+model MaintenanceRequest {
+  id          String   @id @default(cuid())
+  propertyId  String
+  title       String
+  description String
+  priority    String   @default("medium")
+  status      String   @default("pending")
+  assignedTo  String?
+  cost        Float?
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model Payment {
+  id          String    @id @default(cuid())
+  tenantId    String
+  propertyId  String
+  amount      Float
+  type        String
+  status      String    @default("pending")
+  dueDate     DateTime
+  paidDate    DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  property Property @relation(fields: [propertyId], references: [id])
+}
+
+model Reminder {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  dueDate     DateTime
+  status      String   @default("pending")
+  category    String   @default("general")
+  relatedId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  source    String    @default("web")
+  userId    String?
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+}
